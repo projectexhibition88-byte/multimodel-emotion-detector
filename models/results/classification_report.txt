@@ -1,0 +1,26 @@
+=================================================================
+FACIAL EMOTION MODEL — CLASSIFICATION REPORT
+=================================================================
+
+Best Epoch: 25
+Training Accuracy at Best Epoch: 99.07%
+Validation Accuracy from Training History: 73.27%
+Fresh Evaluation Accuracy: 73.27%
+Training Loss at Best Epoch: 0.0296
+Validation Loss at Best Epoch: 1.4137
+
+PER-CLASS PERFORMANCE
+-----------------------------------------------------------------
+              precision    recall  f1-score   support
+
+     Class 0     0.6675    0.6612    0.6643      1275
+     Class 1     0.7259    0.5355    0.6164       183
+     Class 2     0.5474    0.4970    0.5210      1173
+     Class 3     0.9053    0.8970    0.9011      2952
+     Class 4     0.6800    0.7176    0.6983      1703
+     Class 5     0.5857    0.6091    0.5972      1402
+     Class 6     0.7883    0.8124    0.8001      1471
+
+    accuracy                         0.7327     10159
+   macro avg     0.7000    0.6757    0.6855     10159
+weighted avg     0.7321    0.7327    0.7318     10159
