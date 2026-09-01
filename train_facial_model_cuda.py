@@ -1,10 +1,19 @@
 import os
+import sys
 from multiprocessing import freeze_support
+
+# Ensure UTF-8 output on Windows consoles
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
 
 from torch.utils.data import DataLoader, ConcatDataset
 from torchvision import datasets, models, transforms
@@ -18,19 +27,9 @@ BATCH_SIZE = 64
 EPOCHS = 25
 LEARNING_RATE = 0.0001
 NUM_WORKERS = 0  # IMPORTANT: Keep 0 on Windows to avoid multiprocessing errors
+NUM_CLASSES = 7
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-print("=" * 60)
-print("FACIAL EMOTION MODEL TRAINING")
-print("=" * 60)
-print(f"PyTorch version: {torch.__version__}")
-print(f"Device: {DEVICE}")
-
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-
-print("=" * 60)
 
 
 # ============================================================
@@ -77,7 +76,24 @@ test_transform = transforms.Compose([
 # CREATE DATASETS
 # ============================================================
 
-def load_dataset(path, transform, dataset_name):
+EMOTIONS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
+
+RAF_DB_INDEX_MAP = {
+    '1': EMOTIONS.index('surprise'),  # 6
+    '2': EMOTIONS.index('fear'),      # 2
+    '3': EMOTIONS.index('disgust'),   # 1
+    '4': EMOTIONS.index('happy'),     # 3
+    '5': EMOTIONS.index('sad'),       # 5
+    '6': EMOTIONS.index('angry'),     # 0
+    '7': EMOTIONS.index('neutral')    # 4
+}
+
+
+# ============================================================
+# CREATE DATASETS
+# ============================================================
+
+def load_dataset(path, transform, dataset_name, is_raf_db=False):
 
     if not os.path.exists(path):
         print(f"\nWARNING: {dataset_name} not found!")
@@ -90,8 +106,20 @@ def load_dataset(path, transform, dataset_name):
             transform=transform
         )
 
-        print(f"{dataset_name}: {len(dataset)} images")
-        print(f"Classes: {dataset.classes}")
+        if is_raf_db:
+            remapped_samples = []
+            for file_path, class_idx in dataset.samples:
+                folder_name = dataset.classes[class_idx]
+                correct_idx = RAF_DB_INDEX_MAP.get(folder_name, class_idx)
+                remapped_samples.append((file_path, correct_idx))
+
+            dataset.samples = remapped_samples
+            dataset.targets = [s[1] for s in remapped_samples]
+            dataset.classes = EMOTIONS
+            print(f"{dataset_name}: {len(dataset)} images (Remapped to standard 7 classes)")
+        else:
+            print(f"{dataset_name}: {len(dataset)} images")
+            print(f"Classes: {dataset.classes}")
 
         return dataset
 
@@ -99,6 +127,7 @@ def load_dataset(path, transform, dataset_name):
         print(f"\nCould not load {dataset_name}")
         print(error)
         return None
+
 
 
 # ============================================================
@@ -254,6 +283,15 @@ def validate(
 
 def main():
 
+    print("=" * 60)
+    print("FACIAL EMOTION MODEL TRAINING")
+    print("=" * 60)
+    print(f"PyTorch version: {torch.__version__}")
+    print(f"Device: {DEVICE}")
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print("=" * 60)
+
     print("\nLoading datasets...\n")
 
     # ----------------------------
@@ -279,13 +317,15 @@ def main():
     raf_train = load_dataset(
         RAF_TRAIN,
         train_transform,
-        "RAF-DB Training"
+        "RAF-DB Training",
+        is_raf_db=True
     )
 
     raf_test = load_dataset(
         RAF_TEST,
         test_transform,
-        "RAF-DB Testing"
+        "RAF-DB Testing",
+        is_raf_db=True
     )
 
     # Check that datasets loaded successfully
@@ -469,23 +509,12 @@ def main():
         )
 
         print(
-            f"Training Loss: "
-            f"{train_loss:.4f}"
+            f"Training Loss: {train_loss:.4f} | Training Accuracy: {train_accuracy:.2f}%",
+            flush=True
         )
-
         print(
-            f"Training Accuracy: "
-            f"{train_accuracy:.2f}%"
-        )
-
-        print(
-            f"Validation Loss: "
-            f"{validation_loss:.4f}"
-        )
-
-        print(
-            f"Validation Accuracy: "
-            f"{validation_accuracy:.2f}%"
+            f"Validation Loss: {validation_loss:.4f} | Validation Accuracy: {validation_accuracy:.2f}%",
+            flush=True
         )
 
         # Save best model
@@ -504,7 +533,8 @@ def main():
             )
 
             print(
-                "✓ Best model saved!"
+                f" [+] [★] Best model saved! (Validation Accuracy: {best_accuracy:.2f}%)",
+                flush=True
             )
 
     # ========================================================
@@ -531,13 +561,14 @@ def main():
         "models/facial_emotion_model_final.pth"
     )
 
-    print("\n" + "=" * 60)
-    print("TRAINING COMPLETED!")
-    print("=" * 60)
+    print("\n" + "=" * 60, flush=True)
+    print("TRAINING COMPLETED!", flush=True)
+    print("=" * 60, flush=True)
 
     print(
         f"\nBest Validation Accuracy: "
-        f"{best_accuracy:.2f}%"
+        f"{best_accuracy:.2f}%\n",
+        flush=True
     )
 
     print(
