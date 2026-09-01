@@ -41,6 +41,7 @@ class FacialEmotionDetector:
         self.emotions = EMOTIONS
         self.face_cascade = self._load_cascade()
         self.framework = None  # 'pytorch', 'tensorflow', or 'heuristic'
+        self.model_arch = None  # 'resnet18', 'emotion_cnn', 'tensorflow', 'heuristic'
         self.torch_device = None
         self.model = None
         self._init_backend(model_path)
@@ -63,69 +64,135 @@ class FacialEmotionDetector:
         return cascade
 
     def _init_backend(self, model_path=None):
-        """Checks for PyTorch GPU weights first, then TensorFlow, then fallback."""
+        """Checks for PyTorch ResNet18 (CUDA/CPU) first, then EmotionCNN, then TensorFlow, then fallback."""
         models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
-        pth_path = os.path.join(models_dir, "facial_emotion_model.pth")
-        h5_path = os.path.join(models_dir, "facial_emotion_model.h5")
+        
+        candidates = []
+        if model_path:
+            candidates.append(model_path)
+        candidates.extend([
+            os.path.join(models_dir, "facial_emotion_model_cuda.pth"),
+            os.path.join(models_dir, "facial_emotion_model_final.pth"),
+            os.path.join(models_dir, "facial_emotion_model.pth"),
+            os.path.join(models_dir, "facial_emotion_model.h5")
+        ])
 
-        if model_path and model_path.endswith('.pth'):
-            pth_path = model_path
-        elif model_path and model_path.endswith('.h5'):
-            h5_path = model_path
+        # 1. Try PyTorch CUDA / CPU models
+        for cand in candidates:
+            if cand.endswith('.pth') and os.path.exists(cand):
+                try:
+                    import torch
+                    import torch.nn as nn
+                    from torchvision import models
 
-        # 1. Try PyTorch CUDA / CPU model
-        try:
-            import torch
-            self.torch_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            from train_facial_model_gpu import EmotionCNN
-            self.model = EmotionCNN(num_classes=len(EMOTIONS)).to(self.torch_device)
-            
-            if os.path.exists(pth_path):
-                ckpt = torch.load(pth_path, map_location=self.torch_device)
-                if isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
-                    self.model.load_state_dict(ckpt['model_state_dict'])
-                else:
-                    self.model.load_state_dict(ckpt)
-                self.model.eval()
-                self.framework = 'pytorch'
-                gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-                print(f" [★] Loaded PyTorch Deep CNN Model on: {gpu_name} (File: {pth_path})")
-                return
-            else:
-                # Untrained PyTorch initialized
-                self.model.eval()
-                self.framework = 'pytorch'
-                print(f" [i] Initialized PyTorch CNN architecture on: {self.torch_device}")
-                return
-        except Exception:
-            pass
+                    try:
+                        if torch.cuda.is_available():
+                            self.torch_device = torch.device("cuda:0")
+                            torch.zeros(1, device=self.torch_device)  # smoke test
+                        else:
+                            self.torch_device = torch.device("cpu")
+                    except Exception:
+                        self.torch_device = torch.device("cpu")
+
+                    ckpt = torch.load(cand, map_location=self.torch_device, weights_only=False)
+                    sd = ckpt['model_state_dict'] if (isinstance(ckpt, dict) and 'model_state_dict' in ckpt) else ckpt
+
+                    if 'conv1.weight' in sd or 'fc.1.weight' in sd:
+                        # ResNet-18 Deep Architecture (trained via CUDA)
+                        self.model = models.resnet18(weights=None)
+                        num_features = self.model.fc.in_features
+                        self.model.fc = nn.Sequential(
+                            nn.Dropout(0.3),
+                            nn.Linear(num_features, len(self.emotions))
+                        )
+                        self.model.load_state_dict(sd)
+                        self.model.to(self.torch_device)
+                        self.model.eval()
+                        self.framework = 'pytorch'
+                        self.model_arch = 'resnet18'
+                        gpu_name = torch.cuda.get_device_name(0) if self.torch_device.type == "cuda" else "CPU"
+                        print(f" [★] Loaded ResNet18 Deep Model on: {gpu_name} (File: {cand})")
+                        # Warm-up pass to pre-compile CUDA kernels and allocate memory
+                        try:
+                            with torch.no_grad():
+                                self.model(torch.zeros(1, 3, 224, 224, device=self.torch_device))
+                        except Exception:
+                            pass
+                        return
+                    elif 'block1.0.weight' in sd:
+                        # EmotionCNN Architecture (48x48)
+                        from train_facial_model_gpu import EmotionCNN
+                        self.model = EmotionCNN(num_classes=len(self.emotions)).to(self.torch_device)
+                        self.model.load_state_dict(sd)
+                        self.model.eval()
+                        self.framework = 'pytorch'
+                        self.model_arch = 'emotion_cnn'
+                        gpu_name = torch.cuda.get_device_name(0) if self.torch_device.type == "cuda" else "CPU"
+                        print(f" [★] Loaded EmotionCNN PyTorch Model on: {gpu_name} (File: {cand})")
+                        # Warm-up pass
+                        try:
+                            with torch.no_grad():
+                                self.model(torch.zeros(1, 1, 48, 48, device=self.torch_device))
+                        except Exception:
+                            pass
+                        return
+                except Exception as e:
+                    print(f" [!] PyTorch load failed for {cand}: {e}")
 
         # 2. Try TensorFlow model
-        try:
-            import tensorflow as tf
-            if os.path.exists(h5_path):
-                self.model = tf.keras.models.load_model(h5_path, compile=False)
-                self.framework = 'tensorflow'
-                print(f" [★] Loaded TensorFlow CNN Model from: {h5_path}")
-                return
-        except Exception:
-            pass
+        for cand in candidates:
+            if cand.endswith('.h5') and os.path.exists(cand):
+                try:
+                    import tensorflow as tf
+                    self.model = tf.keras.models.load_model(cand, compile=False)
+                    self.framework = 'tensorflow'
+                    self.model_arch = 'tensorflow'
+                    print(f" [★] Loaded TensorFlow CNN Model from: {cand}")
+                    return
+                except Exception:
+                    pass
 
         # 3. Fallback heuristic mode
         print(" [i] Initialized geometric feature emotion analyzer fallback.")
         self.framework = 'heuristic'
+        self.model_arch = 'heuristic'
 
-    def predict_emotion(self, face_gray):
-        """Runs inference on a cropped grayscale face."""
+    def predict_emotion(self, face_img):
+        """Runs inference on a cropped face (accepts BGR or grayscale image)."""
         if self.framework == 'pytorch' and self.model is not None:
             import torch
-            resized = cv2.resize(face_gray, (48, 48), interpolation=cv2.INTER_AREA)
-            norm = (resized.astype("float32") / 255.0 - 0.5) / 0.5
-            tensor = torch.from_numpy(norm).unsqueeze(0).unsqueeze(0).to(self.torch_device)
-            
-            with torch.no_grad():
-                out = self.model(tensor)
-                probs = torch.softmax(out, dim=1).cpu().numpy()[0]
+            if self.model_arch == 'resnet18':
+                # ResNet18: 3-channel RGB, (224, 224), normalized with ImageNet stats
+                if len(face_img.shape) == 2:
+                    face_rgb = cv2.cvtColor(face_img, cv2.COLOR_GRAY2RGB)
+                elif face_img.shape[2] == 4:
+                    face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGRA2RGB)
+                else:
+                    face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                
+                resized = cv2.resize(face_rgb, (224, 224), interpolation=cv2.INTER_LINEAR)
+                norm = resized.astype(np.float32) / 255.0
+                mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+                std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+                norm = (norm - mean) / std
+                tensor = torch.from_numpy(norm.transpose(2, 0, 1)).unsqueeze(0).to(self.torch_device)
+                
+                with torch.no_grad():
+                    out = self.model(tensor)
+                    probs = torch.softmax(out, dim=1).cpu().numpy()[0]
+
+            else:  # emotion_cnn
+                if len(face_img.shape) == 3:
+                    face_gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
+                else:
+                    face_gray = face_img
+                resized = cv2.resize(face_gray, (48, 48), interpolation=cv2.INTER_AREA)
+                norm = (resized.astype(np.float32) / 255.0 - 0.5) / 0.5
+                tensor = torch.from_numpy(norm).unsqueeze(0).unsqueeze(0).to(self.torch_device)
+                
+                with torch.no_grad():
+                    out = self.model(tensor)
+                    probs = torch.softmax(out, dim=1).cpu().numpy()[0]
 
             emotion_idx = int(np.argmax(probs))
             dom_emotion = self.emotions[emotion_idx]
@@ -134,6 +201,10 @@ class FacialEmotionDetector:
             return dom_emotion, confidence, prob_dict
 
         elif self.framework == 'tensorflow' and self.model is not None:
+            if len(face_img.shape) == 3:
+                face_gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
+            else:
+                face_gray = face_img
             resized = cv2.resize(face_gray, (48, 48), interpolation=cv2.INTER_AREA)
             norm = resized.astype("float32") / 255.0
             reshaped = np.expand_dims(np.expand_dims(norm, axis=0), axis=-1)
@@ -146,6 +217,10 @@ class FacialEmotionDetector:
 
         else:
             # Geometric Heuristic
+            if len(face_img.shape) == 3:
+                face_gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
+            else:
+                face_gray = face_img
             h, w = face_gray.shape
             mouth_roi = face_gray[int(h*0.65):int(h*0.95), int(w*0.2):int(w*0.8)]
             upper_roi = face_gray[int(h*0.15):int(h*0.5), int(w*0.15):int(w*0.85)]
@@ -218,7 +293,15 @@ class FacialEmotionDetector:
         last_dom = "neutral"
 
         for (x, y, w, h) in faces:
-            face_roi = gray[y:y+h, x:x+w]
+            # 10% padding margin so eyebrows, forehead, and chin are fully captured
+            pad_x = int(w * 0.10)
+            pad_y = int(h * 0.10)
+            x1 = max(0, x - pad_x)
+            y1 = max(0, y - pad_y)
+            x2 = min(frame.shape[1], x + w + pad_x)
+            y2 = min(frame.shape[0], y + h + pad_y)
+            
+            face_roi = frame[y1:y2, x1:x2]
             dominant_emotion, confidence, probs = self.predict_emotion(face_roi)
             last_probs = probs
             last_dom = dominant_emotion
@@ -248,13 +331,25 @@ class FacialEmotionDetector:
         print(" Controls: Press 'q' to Quit | Press 's' to Save Snapshot")
         print("=" * 65)
 
-        cap = cv2.VideoCapture(camera_id)
+        # Fast camera initialization on Windows using DirectShow (bypasses 3-5s MSMF probe delay)
+        if sys.platform.startswith("win"):
+            cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(camera_id)
+        else:
+            cap = cv2.VideoCapture(camera_id)
+
         if not cap.isOpened():
             print(f" [!] Error: Unable to access webcam on device {camera_id}.")
             return
 
+        # Optimization: minimal buffer to prevent frame lag and instant rendering
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+        window_name = "Review 1: Facial Emotion Detection (Group-52)"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
         prev_time = time.time()
         snapshot_count = 0
@@ -272,7 +367,7 @@ class FacialEmotionDetector:
             cv2.putText(annotated_frame, f"FPS: {fps:.1f}", (15, 75),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.50, (100, 255, 100), 1, cv2.LINE_AA)
 
-            cv2.imshow("Review 1: Facial Emotion Detection (Group-52)", annotated_frame)
+            cv2.imshow(window_name, annotated_frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
