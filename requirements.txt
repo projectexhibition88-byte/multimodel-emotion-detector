@@ -1,9 +1,25 @@
+# Multimodal Emotion Recognition (DSN2098 - Group-52)
+# Core Deep Learning & PyTorch
 torch
 torchvision
+torchaudio
+
+# Computer Vision & Audio Processing
 opencv-python
+pillow
+librosa
+soundfile
+scipy
+
+# Machine Learning & Data Analytics
 numpy
 pandas
-Pillow
+scikit-learn
 matplotlib
 seaborn
-scikit-learn
+
+# FastAPI High-Performance Async Backend
+fastapi
+uvicorn
+python-multipart
+pydantic
