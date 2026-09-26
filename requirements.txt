@@ -1,5 +1,5 @@
-# Multimodal Emotion Recognition (DSN2098 - Group-52)
-# Core Deep Learning & PyTorch
+# Multimodal Emotion Recognition System
+# Deep Learning & Core
 torch
 torchvision
 torchaudio
@@ -18,8 +18,6 @@ scikit-learn
 matplotlib
 seaborn
 
-# FastAPI High-Performance Async Backend
-fastapi
-uvicorn
-python-multipart
-pydantic
+# Flask Web Backend
+Flask
+flask-cors

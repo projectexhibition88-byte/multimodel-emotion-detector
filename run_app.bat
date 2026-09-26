@@ -5,8 +5,8 @@ echo  Starting Serene Earth AI Emotion Recognition Server...
 echo ======================================================================
 cd /d "%~dp0"
 if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" main.py
+    ".venv\Scripts\python.exe" part2_multimodal_system.py
 ) else (
-    python main.py
+    python part2_multimodal_system.py
 )
 pause

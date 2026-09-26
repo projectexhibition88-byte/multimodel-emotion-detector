@@ -99,8 +99,17 @@ DOMAIN_RECOMMENDATIONS = {
 class FacialEmotionEngine:
     def __init__(self, model_path=None):
         self.face_cascade = None
+        self.face_detector = None
         try:
-            self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+            yunet_path = os.path.join(models_dir, "face_detection_yunet.onnx")
+            if os.path.exists(yunet_path):
+                self.face_detector = cv2.FaceDetectorYN.create(
+                    model=yunet_path, config="", input_size=(320, 320),
+                    score_threshold=0.6, nms_threshold=0.3, top_k=5000
+                )
+            else:
+                self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         except Exception:
             pass
         self.backend = None
@@ -208,7 +217,14 @@ class FacialEmotionEngine:
 
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         faces = []
-        if self.face_cascade and not self.face_cascade.empty():
+        if self.face_detector is not None:
+            height, width = img_bgr.shape[:2]
+            self.face_detector.setInputSize((width, height))
+            _, detections = self.face_detector.detect(img_bgr)
+            if detections is not None:
+                for det in detections:
+                    faces.append((int(det[0]), int(det[1]), int(det[2]), int(det[3])))
+        elif self.face_cascade and not self.face_cascade.empty():
             faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5, minSize=(40, 40))
 
         results = []
@@ -508,6 +524,14 @@ class VoiceEmotionEngine:
                 data = librosa.resample(data, orig_sr=sr, target_sr=22050)
                 sr = 22050
 
+            try:
+                # Trim leading/trailing background silence (top_db=40 is much safer for speech)
+                trimmed_data, _ = librosa.effects.trim(data, top_db=40)
+                if len(trimmed_data) > 22050 * 0.5: # keep if at least 0.5s voice
+                    data = trimmed_data
+            except Exception as e:
+                print(f" [!] Voice Engine noise cancellation error: {e}")
+
             print(f" [+] [Voice Engine] Decoded audio successfully: {len(data)} samples ({len(data)/22050:.2f}s)")
 
             # Acoustic Metrics for Dashboard
@@ -797,29 +821,98 @@ class TextEmotionEngine:
 # -----------------------------------------------------------------------------
 # Modality 4: Multimodal Decision Fusion Engine
 # -----------------------------------------------------------------------------
+class DeepTensorAttentionFusion(nn.Module):
+    """
+    High-Performance Tri-Modal Deep Attention Fusion Network
+    Learns dynamic modality weighting & cross-modal interaction tensors
+    """
+    def __init__(self, num_classes=7, hidden_dim=64):
+        super(DeepTensorAttentionFusion, self).__init__()
+        self.proj_face = nn.Sequential(nn.Linear(num_classes, hidden_dim), nn.BatchNorm1d(hidden_dim), nn.GELU(), nn.Dropout(0.2))
+        self.proj_voice = nn.Sequential(nn.Linear(num_classes, hidden_dim), nn.BatchNorm1d(hidden_dim), nn.GELU(), nn.Dropout(0.2))
+        self.proj_text = nn.Sequential(nn.Linear(num_classes, hidden_dim), nn.BatchNorm1d(hidden_dim), nn.GELU(), nn.Dropout(0.2))
+        
+        self.attention_net = nn.Sequential(nn.Linear(hidden_dim * 3, 64), nn.Tanh(), nn.Linear(64, 3), nn.Softmax(dim=1))
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim * 3 + num_classes * 3, 128),
+            nn.BatchNorm1d(128), nn.GELU(), nn.Dropout(0.25),
+            nn.Linear(128, 64), nn.GELU(), nn.Linear(64, num_classes)
+        )
+
+    def forward(self, face_p, voice_p, text_p):
+        h_f, h_v, h_t = self.proj_face(face_p), self.proj_voice(voice_p), self.proj_text(text_p)
+        concat_h = torch.cat([h_f, h_v, h_t], dim=1)
+        attn_weights = self.attention_net(concat_h)
+        w_f, w_v, w_t = attn_weights[:, 0].unsqueeze(1), attn_weights[:, 1].unsqueeze(1), attn_weights[:, 2].unsqueeze(1)
+        attended_features = torch.cat([h_f * w_f, h_v * w_v, h_t * w_t, face_p * w_f, voice_p * w_v, text_p * w_t], dim=1)
+        return self.classifier(attended_features), attn_weights
+
 class MultimodalFusionEngine:
-    def __init__(self, face_weight=0.45, voice_weight=0.35, text_weight=0.20):
-        self.weights = {'face': face_weight, 'voice': voice_weight, 'text': text_weight}
+    def __init__(self, model_path=None):
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.model = None
+        self._init_model(model_path)
+        # Fallback weights if model fails
+        self.weights = {'face': 0.45, 'voice': 0.35, 'text': 0.20}
+
+    def _init_model(self, model_path=None):
+        models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+        cand = model_path or os.path.join(models_dir, "multimodal_fusion_model.pth")
+        if os.path.exists(cand):
+            try:
+                self.model = DeepTensorAttentionFusion(num_classes=len(EMOTIONS), hidden_dim=64).to(self.device)
+                ckpt = torch.load(cand, map_location=self.device, weights_only=False)
+                self.model.load_state_dict(ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt)
+                self.model.eval()
+                print(f" [+] [Fusion Engine] Loaded Adaptive Deep Attention Fusion Model: {cand}")
+            except Exception as e:
+                print(f" [!] [Fusion Engine] Failed to load attention fusion model: {e}")
 
     def fuse(self, face_res=None, voice_res=None, text_res=None):
         active_modalities = {}
+        
+        # Prepare inputs for Modality Dropout / Dynamic Gating (handles missing modalities)
+        face_probs = [1.0/len(EMOTIONS)] * len(EMOTIONS)
+        voice_probs = [1.0/len(EMOTIONS)] * len(EMOTIONS)
+        text_probs = [1.0/len(EMOTIONS)] * len(EMOTIONS)
+
         if face_res and face_res.get('status') == 'success':
             active_modalities['face'] = (self.weights['face'], face_res['probabilities'])
+            face_probs = [face_res['probabilities'][e] for e in EMOTIONS]
         if voice_res and voice_res.get('status') == 'success':
             active_modalities['voice'] = (self.weights['voice'], voice_res['probabilities'])
+            voice_probs = [voice_res['probabilities'][e] for e in EMOTIONS]
         if text_res and text_res.get('status') == 'success':
             active_modalities['text'] = (self.weights['text'], text_res['probabilities'])
+            text_probs = [text_res['probabilities'][e] for e in EMOTIONS]
 
         if not active_modalities:
             return {'status': 'error', 'message': 'No valid modality input received for fusion.'}
 
-        total_w = sum(w for w, _ in active_modalities.values())
         fused_probabilities = {e: 0.0 for e in EMOTIONS}
+        attention_weights = None
 
-        for mod_name, (w, probs) in active_modalities.items():
-            norm_w = w / total_w
-            for e in EMOTIONS:
-                fused_probabilities[e] += norm_w * probs.get(e, 0.0)
+        if self.model is not None:
+            # Deep Adaptive/Gated Fusion with Cross-modal Attention
+            f_t = torch.tensor([face_probs], dtype=torch.float32, device=self.device)
+            v_t = torch.tensor([voice_probs], dtype=torch.float32, device=self.device)
+            t_t = torch.tensor([text_probs], dtype=torch.float32, device=self.device)
+            
+            with torch.no_grad():
+                logits, attn = self.model(f_t, v_t, t_t)
+                probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+                attention_weights = attn.cpu().numpy()[0]
+                
+            for i, e in enumerate(EMOTIONS):
+                fused_probabilities[e] = float(probs[i])
+        else:
+            # Fallback Fixed Fusion
+            total_w = sum(w for w, _ in active_modalities.values())
+            for mod_name, (w, probs) in active_modalities.items():
+                norm_w = w / total_w
+                for e in EMOTIONS:
+                    fused_probabilities[e] += norm_w * probs.get(e, 0.0)
 
         fused_dominant = max(fused_probabilities, key=fused_probabilities.get)
         confidence = float(fused_probabilities[fused_dominant])
@@ -833,7 +926,7 @@ class MultimodalFusionEngine:
         agreement_ratio = valid_votes.count(fused_dominant) / len(valid_votes) if valid_votes else 1.0
         recommendations = DOMAIN_RECOMMENDATIONS.get(fused_dominant, DOMAIN_RECOMMENDATIONS['neutral'])
 
-        return {
+        result = {
             'status': 'success',
             'dominant_emotion': fused_dominant,
             'confidence': confidence,
@@ -843,6 +936,15 @@ class MultimodalFusionEngine:
             'fused_probabilities': fused_probabilities,
             'recommendations': recommendations
         }
+        
+        if attention_weights is not None:
+            result['cross_modal_attention'] = {
+                'face_gate': float(attention_weights[0]),
+                'voice_gate': float(attention_weights[1]),
+                'text_gate': float(attention_weights[2])
+            }
+            
+        return result
 
 
 # -----------------------------------------------------------------------------
@@ -935,6 +1037,7 @@ def predict_text():
 @app.route("/api/predict/multimodal", methods=["POST"])
 def predict_multimodal():
     try:
+        start_time = time.time()
         face_res, voice_res, text_res = None, None, None
 
         if 'image' in request.files:
@@ -973,6 +1076,16 @@ def predict_multimodal():
             text_res = text_engine.analyze_text(text)
 
         fusion_res = fusion_engine.fuse(face_res, voice_res, text_res)
+
+        # Latency + FPS + robustness evaluation
+        latency_ms = (time.time() - start_time) * 1000
+        fps = 1000 / latency_ms if latency_ms > 0 else 0
+        
+        fusion_res['deployment_metrics'] = {
+            'latency_ms': round(latency_ms, 2),
+            'fps': round(fps, 1),
+            'robustness_status': 'Stable' if fps >= 10 else 'Degraded'
+        }
 
         return jsonify({
             'multimodal_result': fusion_res,
