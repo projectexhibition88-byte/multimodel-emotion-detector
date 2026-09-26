@@ -35,7 +35,7 @@ The system classifies **7 Core Emotion Categories**:
    ```
 2. **Start the Multimodal Server:**
    ```bash
-   python part2_multimodal_system.py
+   python multimodal_emotion_detection.py
    ```
    Or run the batch script on Windows:
    ```cmd
@@ -47,7 +47,7 @@ The system classifies **7 Core Emotion Categories**:
 
 ## 📂 Repository Structure
 
-- `part2_multimodal_system.py`: The main Application entry point & Flask API.
+- `multimodal_emotion_detection.py`: The main Application entry point & Flask API.
 - `models/`: Directory containing pre-trained PyTorch/ONNX model files.
 - `training_scripts/`: Scripts used for training high-accuracy models and evaluating the models.
 - `static/` & `templates/`: Assets and views for the React Dashboard.
