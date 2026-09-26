@@ -1,31 +1,31 @@
-# EmotionX — Real-Time Multimodal Emotion Recognition System
+# EmotionX: Real-Time Multimodal Emotion Recognition System
 
 An end-to-end, high-performance real-time Multimodal Emotion Recognition platform powered by **PyTorch**, **Flask**, and an interactive **React Dashboard**.
 
 ---
 
-## 🌟 Overview
+## Overview
 
-**EmotionX** is an advanced AI system capable of recognizing human emotional states with exceptional precision by synchronously combining three distinct modalities:
-1. **Visual Modality (Facial Expressions)**: Real-time high-FPS facial landmark localization (YuNet) with a deep **ResNet-18** feature extractor.
-2. **Acoustic Modality (Speech Prosody & Tone)**: Audio silence trimming and pre-emphasis followed by Mel-spectrogram & MFCC feature extraction with a **Deep CRNN** (1D-CNN + Bi-GRU + Self-Attention).
-3. **Linguistic Modality (Text Semantics & NLP)**: Word embedding sequences analyzed by a **Bidirectional LSTM** with dense highway connections.
+**EmotionX** is an advanced artificial intelligence system capable of recognizing human emotional states with high precision by synchronously combining three distinct modalities:
+1. **Visual Modality (Facial Expressions)**: Real-time high-FPS facial landmark localization (YuNet) paired with a deep **ResNet-18** feature extractor.
+2. **Acoustic Modality (Speech Prosody and Tone)**: Audio silence trimming and pre-emphasis followed by Mel-spectrogram and MFCC feature extraction with a **Deep CRNN** (1D-CNN, Bi-GRU, and Self-Attention).
+3. **Linguistic Modality (Text Semantics and NLP)**: Word embedding sequences analyzed by a **Bidirectional LSTM** with dense highway connections.
 4. **Multimodal Late Fusion**: A deep **Adaptive Tensor Attention Fusion** neural network that synthesizes all three channels with dynamic modality dropout gating to resolve ambiguity and boost accuracy even when sensors fail.
 
-The system classifies **7 Core Emotion Categories**:
-`Angry` 😠, `Disgust` 🤢, `Fear` 😨, `Happy` 😊, `Neutral` 😐, `Sad` 😔, `Surprise` 😲.
+The system categorizes emotional states into seven core classes:
+Angry, Disgust, Fear, Happy, Neutral, Sad, and Surprise.
 
 ---
 
-## 🛠️ Features
+## System Features
 - **Real-Time Inference**: Operates locally through a Web Dashboard.
-- **Microservice Architecture**: Python Flask Backend + HTML/React Frontend via REST API.
-- **High-Fidelity Noise Cancellation**: Real-time silence trimming and high-frequency noise gating for audio.
+- **Microservice Architecture**: Python Flask Backend combined with an HTML/React Frontend via REST API.
+- **High-Fidelity Noise Cancellation**: Real-time silence trimming and high-frequency noise gating for audio processing.
 - **Robust Modality Dropout**: System dynamically adapts using cross-modal attention if audio, video, or text is unavailable.
 
 ---
 
-## 🚀 Setup & Installation
+## Setup and Installation
 
 **Prerequisites:** Python 3.9+ with an NVIDIA GPU (CUDA) recommended for fast inference.
 
@@ -45,7 +45,7 @@ The system classifies **7 Core Emotion Categories**:
 
 ---
 
-## 📂 Repository Structure
+## Repository Structure
 
 - `multimodal_emotion_detection.py`: The main Application entry point & Flask API.
 - `models/`: Directory containing pre-trained PyTorch/ONNX model files.
