@@ -45,6 +45,25 @@ Angry, Disgust, Fear, Happy, Neutral, Sad, and Surprise.
 
 ---
 
+## Quantitative Results & Benchmarks
+
+The system has been rigorously evaluated on benchmark datasets to quantify both prediction accuracy and real-time inference latency.
+
+### 1. Multimodal Fusion Model Accuracy
+- **Synthetic Tri-Modal Dataset**: **98.63%** Test-Set Accuracy 
+- **MELD (Multimodal EmotionLines Dataset) Benchmark**: **42.38%** Test-Set Accuracy (a highly challenging real-world dialogue dataset)
+
+*Detailed classification reports, confusion matrices, and training curves are available in the `models/results/` directory.*
+
+### 2. Real-Time Performance (FPS & Latency)
+End-to-end multimodal inference (processing video frame, audio chunk, and text concurrently through all three deep networks and the fusion engine) was benchmarked on an NVIDIA RTX 5050 Laptop GPU:
+- **Average Inference Latency**: **~54.6 ms** per cycle
+- **Average Throughput**: **~18.3 FPS** 
+
+This latency comfortably exceeds the requirement for real-time responsiveness (>10 FPS) in human-computer interaction applications.
+
+---
+
 ## Repository Structure
 
 - `multimodal_emotion_detection.py`: The main Application entry point & Flask API.
